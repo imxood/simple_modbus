@@ -1,4 +1,7 @@
-use std::time::Duration;
+use std::{
+    io::{Read, Write},
+    time::Duration,
+};
 
 use anyhow::Result;
 use serialport::SerialPort;
@@ -11,7 +14,7 @@ struct SerialStream {
 
 impl SerialStream {
     pub fn new(port: &str, baud_rate: u32) -> Result<Self> {
-        Self::available(port)?;
+        // Self::available(port)?;
 
         let inner_device = serialport::new(port, baud_rate)
             .timeout(Duration::from_millis(10))
@@ -29,6 +32,22 @@ impl SerialStream {
             return Err(anyhow::anyhow!("找不到串口设备: {addr}"));
         }
         Ok(true)
+    }
+}
+
+impl Read for SerialStream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.inner.read(buf)
+    }
+}
+
+impl Write for SerialStream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.inner.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
     }
 }
 
