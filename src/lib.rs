@@ -1,7 +1,9 @@
 // pub mod client;
 // pub mod config;
-// pub mod serial;
-// pub mod stream;
+pub mod serial;
+pub mod stream;
+
+use std::process::id;
 
 use anyhow::Result;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -11,6 +13,7 @@ use nom::{
     sequence::tuple,
     IResult,
 };
+use stream::Stream;
 
 /// Modbus从设备 寄存器地址
 pub(crate) type Address = u16;
@@ -24,7 +27,9 @@ pub(crate) type Word = u16;
 /// Modbus需要读或写的数据数量
 pub(crate) type Quantity = u16;
 
-pub enum Request {
+const MODBUS_MAX_PACKET_SIZE: usize = 260;
+
+pub enum Function {
     /// 读指定数量的保持寄存器的数据
     /// (modbus从设备ID, 要读的保持寄存器的起始地址, 要读的保持寄存器的数量)
     ReadHoldingRegisters(Id, Address, Quantity),
@@ -38,27 +43,27 @@ pub enum Request {
     WriteMultipleRegisters(Id, Address, Vec<Word>),
 }
 
-impl From<Request> for Bytes {
-    fn from(req: Request) -> Bytes {
+impl From<Function> for Bytes {
+    fn from(req: Function) -> Bytes {
         let cnt = req.request_byte_count();
         let mut data = BytesMut::with_capacity(cnt);
         let code = req.code();
         match req {
-            Request::ReadHoldingRegisters(id, address, quantity) => {
+            Function::ReadHoldingRegisters(id, address, quantity) => {
                 data.put_u8(id);
                 data.put_u8(code);
 
                 data.put_u16(address);
                 data.put_u16(quantity);
             }
-            Request::WriteSingleRegister(id, address, word) => {
+            Function::WriteSingleRegister(id, address, word) => {
                 data.put_u8(id);
                 data.put_u8(code);
 
                 data.put_u16(address);
                 data.put_u16(word);
             }
-            Request::WriteMultipleRegisters(id, address, words) => {
+            Function::WriteMultipleRegisters(id, address, words) => {
                 data.put_u8(id);
                 data.put_u8(code);
 
@@ -77,7 +82,7 @@ impl From<Request> for Bytes {
     }
 }
 
-impl Request {
+impl Function {
     pub(crate) fn request_byte_count(&self) -> usize {
         match *self {
             Self::ReadHoldingRegisters(_, _, _) | Self::WriteSingleRegister(_, _, _) => 8,
@@ -91,6 +96,99 @@ impl Request {
             Self::WriteSingleRegister(_, _, _) => 0x06,
             Self::WriteMultipleRegisters(_, _, _) => 0x10,
         }
+    }
+}
+
+struct Client {
+    stream: Box<dyn Stream>,
+}
+
+impl Client {
+    fn new(stream: Box<dyn Stream>) -> Result<Self> {
+        Ok(Self { stream })
+    }
+
+    // fn read(&self, fun: &Function) -> Result<Bytes> {}
+
+    fn write(&mut self, fun: Function) -> Result<()> {
+        let (w_buf, mut r_buf) = Self::build_buffer(&fun)?;
+        match self.stream.write_all(&w_buf) {
+            Ok(_) => match self.stream.read(&mut r_buf) {
+                Ok(_) => {
+                    log::info!("read buf: {:?}", &r_buf);
+                }
+                Err(e) => return Err(anyhow::anyhow!("传输异常, e: {:?}", &e)),
+            },
+            Err(e) => return Err(anyhow::anyhow!("传输异常, e: {:?}", &e)),
+        }
+        Ok(())
+    }
+
+    fn build_buffer(fun: &Function) -> Result<(Bytes, BytesMut)> {
+        let (w_buf, r_buf) = match fun {
+            Function::WriteSingleRegister(id, addr, data) => {
+                // id + code + addr + data + crc
+                // 4 + 2 + 2 ==> 6 + 2
+                let mut w_buf = BytesMut::with_capacity(6 + 2);
+                w_buf.put_u8(*id);
+                w_buf.put_u8(0x05);
+                w_buf.put_u16(*addr);
+                w_buf.put_u16(*data);
+                let crc = calc_crc(&w_buf);
+                w_buf.put_u16(crc);
+
+                let r_buf = BytesMut::with_capacity(8);
+                (w_buf, r_buf)
+            }
+            Function::WriteMultipleRegisters(id, addr, data) => {
+                let mut w_buf = BytesMut::with_capacity(6 + 2 * data.len());
+                w_buf.put_u8(*id);
+                w_buf.put_u8(0x05);
+                w_buf.put_u16(*addr);
+                for d in data {
+                    w_buf.put_u16(*d);
+                }
+                let crc = calc_crc(&w_buf);
+                w_buf.put_u16(crc);
+
+                let r_buf = BytesMut::with_capacity(8);
+                (w_buf, r_buf)
+            }
+            Function::ReadHoldingRegisters(id, addr, quantity) => {
+                let mut w_buf = BytesMut::with_capacity(6 + 2);
+                w_buf.put_u8(*id);
+                w_buf.put_u8(0x03);
+                w_buf.put_u16(*addr);
+                w_buf.put_u16(*quantity);
+                let crc = calc_crc(&w_buf);
+                w_buf.put_u16(crc);
+
+                let r_buf = BytesMut::with_capacity(6 + *quantity as usize * 2);
+                (w_buf, r_buf)
+            }
+        };
+
+        if w_buf.is_empty() {
+            return Err(anyhow::anyhow!("无效的数据: 发送的数据为空"));
+        }
+
+        if w_buf.len() > MODBUS_MAX_PACKET_SIZE {
+            return Err(anyhow::anyhow!("无效的数据: 发送的数据长度太大"));
+        }
+
+        Ok((w_buf.freeze(), r_buf))
+    }
+
+    // fn read_holding_registers(&mut self, id: u8, address: u16, quantity: u16) -> Result<Vec<u16>> {
+    //     self.write(Function::ReadHoldingRegisters(id, address, quantity))
+    // }
+
+    fn write_single_register(&mut self, id: u8, address: u16, value: u16) -> Result<()> {
+        self.write(Function::WriteSingleRegister(id, address, value))
+    }
+
+    fn write_multiple_registers(&mut self, id: u8, address: u16, values: Vec<u16>) -> Result<()> {
+        self.write(Function::WriteMultipleRegisters(id, address, values))
     }
 }
 
@@ -158,4 +256,11 @@ fn calc_crc(data: &[u8]) -> u16 {
         }
     }
     crc << 8 | crc >> 8
+}
+
+#[test]
+fn test_request() {
+    let Client = Client::new(SerialStream);
+    let req = Function::ReadHoldingRegisters(15, 0x1122, 2);
+    let data = Bytes::from(req);
 }

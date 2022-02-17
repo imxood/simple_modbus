@@ -8,7 +8,7 @@ use serialport::SerialPort;
 
 use crate::stream::Stream;
 
-struct SerialStream {
+pub struct SerialStream {
     inner: Box<dyn SerialPort>,
 }
 
