@@ -13,6 +13,7 @@ use nom::{
     sequence::tuple,
     IResult,
 };
+use serial::SerialStream;
 use stream::Stream;
 
 /// Modbus从设备 寄存器地址
@@ -99,7 +100,7 @@ impl Function {
     }
 }
 
-struct Client {
+pub struct Client {
     stream: Box<dyn Stream>,
 }
 
@@ -183,11 +184,11 @@ impl Client {
     //     self.write(Function::ReadHoldingRegisters(id, address, quantity))
     // }
 
-    fn write_single_register(&mut self, id: u8, address: u16, value: u16) -> Result<()> {
+    pub fn write_single_register(&mut self, id: u8, address: u16, value: u16) -> Result<()> {
         self.write(Function::WriteSingleRegister(id, address, value))
     }
 
-    fn write_multiple_registers(&mut self, id: u8, address: u16, values: Vec<u16>) -> Result<()> {
+    pub fn write_multiple_registers(&mut self, id: u8, address: u16, values: Vec<u16>) -> Result<()> {
         self.write(Function::WriteMultipleRegisters(id, address, values))
     }
 }
@@ -259,8 +260,11 @@ fn calc_crc(data: &[u8]) -> u16 {
 }
 
 #[test]
-fn test_request() {
-    let Client = Client::new(SerialStream);
+fn test_request() -> Result<()> {
+    let stream  = Box::new(SerialStream::new("COM4", 9600)?);
+    let mut client = Client::new(stream)?;
+    // client.write_single_register(15, address, value)?;
     let req = Function::ReadHoldingRegisters(15, 0x1122, 2);
     let data = Bytes::from(req);
+    Ok(())
 }
