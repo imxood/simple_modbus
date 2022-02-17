@@ -17,7 +17,7 @@ impl SerialStream {
         // Self::available(port)?;
 
         let inner_device = serialport::new(port, baud_rate)
-            .timeout(Duration::from_millis(10))
+            .timeout(Duration::from_millis(5000))
             .open()?;
 
         Ok(Self {
