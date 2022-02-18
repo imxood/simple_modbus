@@ -46,11 +46,42 @@ pub enum Function {
 
 pub struct Client {
     stream: Box<dyn Stream>,
+    need_reply: bool,
 }
 
 impl Client {
-    fn new(stream: Box<dyn Stream>) -> Result<Self> {
-        Ok(Self { stream })
+    pub fn new(stream: Box<dyn Stream>) -> Result<Self> {
+        Ok(Self {
+            stream,
+            need_reply: true,
+        })
+    }
+
+    pub fn read_holding_registers(
+        &mut self,
+        id: Id,
+        address: Address,
+        quantity: Quantity,
+    ) -> Result<Vec<Word>> {
+        let bytes = self.read(Function::ReadHoldingRegisters(id, address, quantity))?;
+        pack_bytes(bytes)
+    }
+
+    pub fn write_single_register(&mut self, id: Id, address: Address, value: Word) -> Result<()> {
+        self.write(Function::WriteSingleRegister(id, address, value))
+    }
+
+    pub fn write_multiple_registers(
+        &mut self,
+        id: Id,
+        address: Address,
+        values: Vec<Word>,
+    ) -> Result<()> {
+        self.write(Function::WriteMultipleRegisters(id, address, values))
+    }
+
+    pub fn set_need_reply(&mut self, need_reply: bool) {
+        self.need_reply = need_reply;
     }
 
     fn get_reply_data(&self, mut reply: Bytes) -> Result<Bytes> {
@@ -67,29 +98,28 @@ impl Client {
     }
 
     fn validate_reply(&self, req: &Bytes, reply: &BytesMut) -> Result<()> {
+        let req_len = req.len();
+        let reply_len = reply.len();
+
         // 检查数据长度, 仅仅简单的判断一下
-        if req.len() < 3 || reply.len() < 3 {
+        if req_len < 3 || reply_len < 3 {
             return Err(anyhow::anyhow!("数据异常"));
         }
-        {
-            let mut req = Cursor::new(req);
-            let mut reply = Cursor::new(reply);
-            // 检查ID
-            if req.get_u8() != reply.get_u8() {
-                return Err(anyhow::anyhow!("数据异常, 响应ID与请求ID不一致"));
-            }
 
-            // 检查功能码
-            if req.get_u8() != reply.get_u8() {
-                return Err(anyhow::anyhow!("数据异常, 响应功能码与请求功能码不一致"));
-            }
+        // 检查ID
+        if req.get(0) != reply.get(0) {
+            return Err(anyhow::anyhow!("数据异常, 响应ID与请求ID不一致"));
+        }
+
+        // 检查功能码
+        if req.get(1) != reply.get(1) {
+            return Err(anyhow::anyhow!("数据异常, 响应功能码与请求功能码不一致"));
         }
 
         // 检查reply的CRC
-        let (data, reply) = reply.split_at(reply.len() - 2);
-
-        let mut reply = Cursor::new(reply);
-        if reply.get_u16() != calc_crc(data) {
+        let crc = ((reply[reply_len - 2] as u16) << 8) + (reply[reply_len - 1] as u16);
+        let (data, _) = reply.split_at(reply_len - 2);
+        if crc != calc_crc(data) {
             return Err(anyhow::anyhow!("数据异常, 响应数据CRC错误"));
         }
         Ok(())
@@ -97,67 +127,80 @@ impl Client {
 
     fn transfer(&mut self, req: &Bytes, reply: &mut BytesMut) -> Result<()> {
         match self.stream.write_all(req) {
-            Ok(_) => match self.stream.read(reply) {
-                Ok(_) => {
-                    log::info!("reply: {:?}", reply);
-                    // self.validate_reply(req, reply)?;
+            Ok(_) => {
+                if !self.need_reply {
+                    self.stream.read(reply).ok();
+                    return Ok(());
                 }
-                Err(e) => return Err(anyhow::anyhow!("传输异常, e: {:?}", &e)),
-            },
+
+                match self.stream.read(reply) {
+                    Ok(_) => {
+                        self.validate_reply(req, reply)?;
+                    }
+                    Err(e) => return Err(anyhow::anyhow!("传输异常, e: {:?}", &e)),
+                }
+            }
             Err(e) => return Err(anyhow::anyhow!("传输异常, e: {:?}", &e)),
         }
         Ok(())
     }
 
     fn read(&mut self, fun: Function) -> Result<Bytes> {
-        let (req, mut reply) = Self::build_buffer(&fun)?;
+        let (req, mut reply) = Self::build_buffer(fun)?;
         self.transfer(&req, &mut reply)?;
         self.get_reply_data(reply.freeze())
     }
 
     fn write(&mut self, fun: Function) -> Result<()> {
-        let (req, mut reply) = Self::build_buffer(&fun)?;
+        let (req, mut reply) = Self::build_buffer(fun)?;
         self.transfer(&req, &mut reply)
     }
 
-    fn build_buffer(fun: &Function) -> Result<(Bytes, BytesMut)> {
+    fn build_buffer(fun: Function) -> Result<(Bytes, BytesMut)> {
         let (req, reply) = match fun {
             Function::WriteSingleRegister(id, addr, data) => {
                 let mut req = BytesMut::with_capacity(6 + 2);
-                req.put_u8(*id);
+                req.put_u8(id);
                 req.put_u8(0x06);
-                req.put_u16(*addr);
-                req.put_u16(*data);
+                req.put_u16(addr);
+                req.put_u16(data);
                 let crc = calc_crc(&req);
                 req.put_u16(crc);
 
-                let reply = BytesMut::with_capacity(8);
+                let reply = vec![0u8; 8];
+                let reply = BytesMut::from(&reply[..]);
                 (req, reply)
             }
             Function::WriteMultipleRegisters(id, addr, data) => {
-                let mut req = BytesMut::with_capacity(7 + 2 * data.len() + 2);
-                req.put_u8(*id);
+                let word_cnt = data.len() as u16;
+                let byte_cnt = 2 * word_cnt as u8;
+                let mut req = BytesMut::with_capacity(7 + byte_cnt as usize + 2);
+                req.put_u8(id);
                 req.put_u8(0x10);
-                req.put_u16(*addr);
+                req.put_u16(addr);
+                req.put_u16(word_cnt);
+                req.put_u8(byte_cnt);
                 for d in data {
-                    req.put_u16(*d);
+                    req.put_u16(d);
                 }
                 let crc = calc_crc(&req);
                 req.put_u16(crc);
 
-                let reply = BytesMut::with_capacity(8);
+                let reply = vec![0u8; 8];
+                let reply = BytesMut::from(&reply[..]);
                 (req, reply)
             }
             Function::ReadHoldingRegisters(id, addr, quantity) => {
                 let mut req = BytesMut::with_capacity(6 + 2);
-                req.put_u8(*id);
+                req.put_u8(id);
                 req.put_u8(0x03);
-                req.put_u16(*addr);
-                req.put_u16(*quantity);
+                req.put_u16(addr);
+                req.put_u16(quantity);
                 let crc = calc_crc(&req);
                 req.put_u16(crc);
 
-                let reply = BytesMut::with_capacity(6 + *quantity as usize * 2);
+                let reply = vec![0u8; 5 + quantity as usize * 2];
+                let reply = BytesMut::from(&reply[..]);
                 (req, reply)
             }
         };
@@ -171,24 +214,6 @@ impl Client {
         }
 
         Ok((req.freeze(), reply))
-    }
-
-    fn read_holding_registers(&mut self, id: u8, address: u16, quantity: u16) -> Result<Vec<u16>> {
-        let bytes = self.read(Function::ReadHoldingRegisters(id, address, quantity))?;
-        pack_bytes(bytes)
-    }
-
-    pub fn write_single_register(&mut self, id: u8, address: u16, value: u16) -> Result<()> {
-        self.write(Function::WriteSingleRegister(id, address, value))
-    }
-
-    pub fn write_multiple_registers(
-        &mut self,
-        id: u8,
-        address: u16,
-        values: Vec<u16>,
-    ) -> Result<()> {
-        self.write(Function::WriteMultipleRegisters(id, address, values))
     }
 }
 
@@ -294,23 +319,60 @@ impl std::ops::Not for Coil {
 }
 
 #[test]
-fn test_request() -> Result<()> {
+fn test_function() -> Result<()> {
     std::env::set_var("RUST_LOG", "DEBUG");
     env_logger::init();
 
-    let stream = Box::new(SerialStream::new("/dev/ttyUSB0", 19200)?);
+    let stream = Box::new(SerialStream::new("COM4", 19200)?);
+
     let mut client = Client::new(stream)?;
-    client.write_single_register(15, 0x0000, 0x01)?;
+    client.set_need_reply(false);
 
-    let pos = 100000;
-    client.write_multiple_registers(15, 0x0016, vec![(pos & 0xffff) as u16, (pos >> 16) as u16])?;
+    let id = 15;
 
-    std::thread::sleep(Duration::from_secs(5));
+    loop {
+        if let Err(e) = client.write_single_register(id, 0x0000, 0x01) {
+            log::error!("{:?}", &e);
+        }
 
-    let pos = 0;
-    client.write_multiple_registers(15, 0x0016, vec![(pos & 0xffff) as u16, (pos >> 16) as u16])?;
+        let pos = 45678u32 * 3;
+        log::info!("pos: {:?}", &pos);
 
-    // let req = Function::ReadHoldingRegisters(15, 0x1122, 2);
-    // let data = Bytes::from(req);
-    Ok(())
+        if let Err(e) = client.write_multiple_registers(
+            id,
+            0x0016,
+            vec![(pos & 0xffff) as u16, (pos >> 16) as u16],
+        ) {
+            log::error!("{:?}", &e);
+        }
+        std::thread::sleep(Duration::from_secs(3));
+
+        match client.read_holding_registers(id, 0x0016, 2) {
+            Err(e) => {
+                log::error!("{:?}", &e);
+            }
+            Ok(data) => {
+                log::info!("data: {:?}", &data);
+            }
+        }
+
+        let pos = 0;
+        if let Err(e) = client.write_multiple_registers(
+            id,
+            0x0016,
+            vec![(pos & 0xffff) as u16, (pos >> 16) as u16],
+        ) {
+            log::error!("{:?}", &e);
+        }
+        std::thread::sleep(Duration::from_secs(3));
+
+        match client.read_holding_registers(id, 0x0016, 2) {
+            Err(e) => {
+                log::error!("{:?}", &e);
+            }
+            Ok(data) => {
+                log::info!("data: {:?}", &data);
+            }
+        }
+    }
 }

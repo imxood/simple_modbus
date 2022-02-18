@@ -25,13 +25,18 @@ impl SerialStream {
         })
     }
 
-    pub fn available(addr: &str) -> Result<bool> {
+    pub fn set_timeout(&mut self, timeout: Duration) -> Result<()> {
+        self.inner.set_timeout(timeout)?;
+        Ok(())
+    }
+
+    pub fn available(addr: &str) -> Result<()> {
         // 检查串口是否存在
         let ports = serialport::available_ports()?;
         if !ports.iter().any(|port| port.port_name == addr) {
             return Err(anyhow::anyhow!("找不到串口设备: {addr}"));
         }
-        Ok(true)
+        Ok(())
     }
 }
 
