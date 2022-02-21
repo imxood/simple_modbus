@@ -1,12 +1,9 @@
-// pub mod client;
-// pub mod config;
 pub mod serial;
 pub mod stream;
 
-use std::{io::Cursor, process::id, str::FromStr, time::Duration};
-
 use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use std::time::Duration;
 use stream::Stream;
 
 /// Modbus从设备 寄存器地址
