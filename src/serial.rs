@@ -1,10 +1,9 @@
+use anyhow::Result;
+use serialport::SerialPort;
 use std::{
     io::{Read, Write},
     time::Duration,
 };
-
-use anyhow::Result;
-use serialport::SerialPort;
 
 use crate::stream::Stream;
 
@@ -25,6 +24,7 @@ impl SerialStream {
         })
     }
 
+    /// 设置 串口数据读写 的超时时间
     pub fn set_timeout(&mut self, timeout: Duration) -> Result<()> {
         self.inner.set_timeout(timeout)?;
         Ok(())
@@ -57,19 +57,8 @@ impl Write for SerialStream {
 }
 
 impl Stream for SerialStream {
-    fn try_read(&mut self, buf: &mut [u8]) -> Result<usize> {
-        todo!()
-    }
-
-    fn readable(&self) -> Result<()> {
-        todo!()
-    }
-
-    fn try_write(&mut self, buf: &mut [u8]) -> Result<usize> {
-        todo!()
-    }
-
-    fn writable(&self) -> Result<()> {
-        todo!()
+    fn set_timeout(&mut self, timeout: Duration) -> Result<()> {
+        self.inner.set_timeout(timeout)?;
+        Ok(())
     }
 }

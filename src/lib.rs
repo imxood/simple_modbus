@@ -7,13 +7,6 @@ use std::{io::Cursor, process::id, str::FromStr, time::Duration};
 
 use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use nom::{
-    bytes::complete::{tag, take_while_m_n},
-    combinator::map_res,
-    sequence::tuple,
-    IResult,
-};
-use serial::SerialStream;
 use stream::Stream;
 
 /// Modbus从设备 寄存器地址
@@ -55,6 +48,10 @@ impl Client {
             stream,
             need_reply: true,
         })
+    }
+
+    pub fn set_timeout(&mut self, timeout: Duration) -> Result<()> {
+        self.stream.set_timeout(timeout)
     }
 
     pub fn read_holding_registers(
@@ -323,7 +320,7 @@ fn test_function() -> Result<()> {
     std::env::set_var("RUST_LOG", "DEBUG");
     env_logger::init();
 
-    let stream = Box::new(SerialStream::new("COM4", 19200)?);
+    let stream = Box::new(serial::SerialStream::new("COM4", 19200)?);
 
     let mut client = Client::new(stream)?;
     client.set_need_reply(false);
