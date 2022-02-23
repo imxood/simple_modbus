@@ -30,13 +30,14 @@ impl SerialStream {
         Ok(())
     }
 
-    pub fn available(addr: &str) -> Result<()> {
-        // 检查串口是否存在
+    /// 检查串口是否有效
+    pub fn available() -> Result<Vec<String>> {
         let ports = serialport::available_ports()?;
-        if !ports.iter().any(|port| port.port_name == addr) {
-            return Err(anyhow::anyhow!("找不到串口设备: {addr}"));
-        }
-        Ok(())
+        let ports = ports
+            .iter()
+            .map(|port| port.port_name.clone())
+            .collect::<Vec<String>>();
+        Ok(ports)
     }
 }
 

@@ -32,6 +32,10 @@ pub enum Function {
     /// 写多个寄存器
     /// (modbus从设备ID, 要写入的寄存器的起始地址, 要写入这些寄存器的数据列表)
     WriteMultipleRegisters(Id, Address, Vec<Word>),
+
+    /// 定制
+    /// (要写的数据, 返回的数据)
+    Custom(Vec<u8>, Vec<u8>),
 }
 
 pub struct Client {
@@ -72,6 +76,10 @@ impl Client {
         values: Vec<Word>,
     ) -> Result<()> {
         self.write(Function::WriteMultipleRegisters(id, address, values))
+    }
+
+    pub fn custom(&mut self, req: Vec<u8>, res: Vec<u8>) -> Result<Bytes> {
+        self.read(Function::Custom(req, res))
     }
 
     pub fn set_need_reply(&mut self, need_reply: bool) {
@@ -129,6 +137,7 @@ impl Client {
 
                 match self.stream.read(reply) {
                     Ok(_) => {
+                        log::info!("reply: {:?}", &reply);
                         self.validate_reply(req, reply)?;
                     }
                     Err(e) => return Err(anyhow::anyhow!("传输异常, e: {:?}", &e)),
@@ -151,8 +160,10 @@ impl Client {
     }
 
     fn build_buffer(fun: Function) -> Result<(Bytes, BytesMut)> {
+        // 6 表示: ID(1) + FUN(1) + ADDR(2) + CRC(2)
         let (req, reply) = match fun {
             Function::WriteSingleRegister(id, addr, data) => {
+                // 2 表示: 需要2个字节, 用于保存一个word的data,
                 let mut req = BytesMut::with_capacity(6 + 2);
                 req.put_u8(id);
                 req.put_u8(0x06);
@@ -161,14 +172,20 @@ impl Client {
                 let crc = calc_crc(&req);
                 req.put_u16(crc);
 
+                // reply 表示发送数据后, 返回的数据
                 let reply = vec![0u8; 8];
                 let reply = BytesMut::from(&reply[..]);
                 (req, reply)
             }
             Function::WriteMultipleRegisters(id, addr, data) => {
+                // 2 表示: 需要2个字节, 用于保存 数据的数量 即word的数量
+                // 1 表示: 需要1个字节, 用于保存 要写的数据的字节数
+
+                // byte_cnt 表示: 需要 byte_cnt 个字节, 用于保存 要写的数据
+
                 let word_cnt = data.len() as u16;
                 let byte_cnt = 2 * word_cnt as u8;
-                let mut req = BytesMut::with_capacity(7 + byte_cnt as usize + 2);
+                let mut req = BytesMut::with_capacity(6 + 2 + 1 + byte_cnt as usize);
                 req.put_u8(id);
                 req.put_u8(0x10);
                 req.put_u16(addr);
@@ -185,6 +202,7 @@ impl Client {
                 (req, reply)
             }
             Function::ReadHoldingRegisters(id, addr, quantity) => {
+                // 2 表示: 需要2个字节, 用于保存 需要读取的数据的数量
                 let mut req = BytesMut::with_capacity(6 + 2);
                 req.put_u8(id);
                 req.put_u8(0x03);
@@ -195,6 +213,11 @@ impl Client {
 
                 let reply = vec![0u8; 5 + quantity as usize * 2];
                 let reply = BytesMut::from(&reply[..]);
+                (req, reply)
+            }
+            Function::Custom(req, res) => {
+                let req = BytesMut::from(&req[..]);
+                let reply = BytesMut::from(&res[..]);
                 (req, reply)
             }
         };
@@ -369,4 +392,34 @@ fn test_function() -> Result<()> {
             }
         }
     }
+}
+
+#[test]
+fn test_custom_function() -> Result<()> {
+    std::env::set_var("RUST_LOG", "DEBUG");
+    env_logger::init();
+
+    let stream = Box::new(serial::SerialStream::new("COM16", 19200)?);
+
+    let mut client = Client::new(stream)?;
+    client.set_timeout(Duration::from_millis(2000))?;
+
+    // 使用功能码 0x7a 修改设备地址
+
+    // ID 0x7A TargetId CrcH CrcL
+
+    let mut req = BytesMut::with_capacity(6);
+    req.put_u8(15);
+    req.put_u8(0x7A);
+    req.put_u16(0x00);
+    req.put_u8(2);
+    let crc = calc_crc(&req);
+    req.put_u16(crc);
+
+    let res = vec![0u8; 5];
+
+    let data = client.custom(req.to_vec(), res)?;
+    log::info!("data: {:?}", &data);
+
+    Ok(())
 }
