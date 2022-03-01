@@ -3,7 +3,7 @@ pub mod stream;
 
 use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use stream::Stream;
 
 /// Modbus从设备 寄存器地址
@@ -88,10 +88,12 @@ impl Client {
 
     fn get_reply_data(&self, mut reply: Bytes) -> Result<Bytes> {
         if reply.len() <= 5 {
+            log::info!("data: {:?}", &reply);
             return Err(anyhow::anyhow!("数据异常, 没有取到有效的数据"));
         }
         let len = *reply.get(2).unwrap();
         if 5 + len as usize != reply.len() {
+            log::info!("data: {:?}", &reply);
             return Err(anyhow::anyhow!("数据异常, 没有取到有效的数据"));
         }
 
@@ -127,36 +129,39 @@ impl Client {
         Ok(())
     }
 
-    fn transfer(&mut self, req: &Bytes, reply: &mut BytesMut) -> Result<()> {
+    fn transfer(&mut self, req: &Bytes, reply: &mut BytesMut, write: bool) -> Result<()> {
         match self.stream.write_all(req) {
             Ok(_) => {
-                if !self.need_reply {
-                    self.stream.read(reply).ok();
+                if let Err(e) = self.stream.flush() {
+                    return Err(anyhow::anyhow!(format!("传输异常, E: {}", e.to_string())));
+                }
+                // 写操作 且设置为 不响应
+                if write && !self.need_reply {
                     return Ok(());
                 }
 
                 match self.stream.read(reply) {
                     Ok(_) => {
-                        log::info!("reply: {:?}", &reply);
+                        // log::info!("reply: {:?}", &reply);
                         self.validate_reply(req, reply)?;
                     }
-                    Err(e) => return Err(anyhow::anyhow!("传输异常, e: {:?}", &e)),
+                    Err(e) => return Err(anyhow::anyhow!("read 传输异常, E: {:?}", &e)),
                 }
             }
-            Err(e) => return Err(anyhow::anyhow!("传输异常, e: {:?}", &e)),
+            Err(e) => return Err(anyhow::anyhow!("write_all 传输异常, E: {:?}", &e)),
         }
         Ok(())
     }
 
     fn read(&mut self, fun: Function) -> Result<Bytes> {
         let (req, mut reply) = Self::build_buffer(fun)?;
-        self.transfer(&req, &mut reply)?;
+        self.transfer(&req, &mut reply, false)?;
         self.get_reply_data(reply.freeze())
     }
 
     fn write(&mut self, fun: Function) -> Result<()> {
         let (req, mut reply) = Self::build_buffer(fun)?;
-        self.transfer(&req, &mut reply)
+        self.transfer(&req, &mut reply, true)
     }
 
     fn build_buffer(fun: Function) -> Result<(Bytes, BytesMut)> {
@@ -340,56 +345,75 @@ fn test_function() -> Result<()> {
     std::env::set_var("RUST_LOG", "DEBUG");
     env_logger::init();
 
-    let stream = Box::new(serial::SerialStream::new("COM4", 19200)?);
+    let stream = Box::new(serial::SerialStream::new("COM16", 19200)?);
 
     let mut client = Client::new(stream)?;
-    client.set_need_reply(false);
-
-    let id = 15;
+    client.set_timeout(Duration::from_millis(500))?;
+    // client.set_need_reply(false);
 
     loop {
-        if let Err(e) = client.write_single_register(id, 0x0000, 0x01) {
-            log::error!("{:?}", &e);
-        }
-
-        let pos = 45678u32 * 3;
-        log::info!("pos: {:?}", &pos);
-
-        if let Err(e) = client.write_multiple_registers(
-            id,
-            0x0016,
-            vec![(pos & 0xffff) as u16, (pos >> 16) as u16],
-        ) {
-            log::error!("{:?}", &e);
-        }
-        std::thread::sleep(Duration::from_secs(3));
-
-        match client.read_holding_registers(id, 0x0016, 2) {
-            Err(e) => {
+        for id in [15, 16] {
+            // 使能
+            if let Err(e) = client.write_single_register(id, 0x0000, 0x01) {
                 log::error!("{:?}", &e);
+                return Err(anyhow::anyhow!("{}", e.to_string()));
             }
-            Ok(data) => {
-                log::info!("data: {:?}", &data);
-            }
-        }
 
-        let pos = 0;
-        if let Err(e) = client.write_multiple_registers(
-            id,
-            0x0016,
-            vec![(pos & 0xffff) as u16, (pos >> 16) as u16],
-        ) {
-            log::error!("{:?}", &e);
-        }
-        std::thread::sleep(Duration::from_secs(3));
-
-        match client.read_holding_registers(id, 0x0016, 2) {
-            Err(e) => {
+            // 设置速度
+            if let Err(e) = client.write_single_register(id, 0x0002, 1000) {
                 log::error!("{:?}", &e);
+                return Err(anyhow::anyhow!("{}", e.to_string()));
             }
-            Ok(data) => {
-                log::info!("data: {:?}", &data);
+            
+            // 设置加速度
+            if let Err(e) = client.write_single_register(id, 0x0003, 2000) {
+                log::error!("{:?}", &e);
+                return Err(anyhow::anyhow!("{}", e.to_string()));
             }
+
+            let pos = 0;
+            log::info!("pos: {:?}", &pos);
+
+            if let Err(e) = client.write_multiple_registers(
+                id,
+                0x0016,
+                vec![(pos & 0xffff) as u16, (pos >> 16) as u16],
+            ) {
+                log::error!("{:?}", &e);
+                return Err(anyhow::anyhow!("{}", e.to_string()));
+            }
+            // std::thread::sleep(Duration::from_secs(3));
+
+            // match client.read_holding_registers(id, 0x0016, 2) {
+            //     Err(e) => {
+            //         log::error!("{:?}", &e);
+            //         return Err(anyhow::anyhow!("{}", e.to_string()));
+            //     }
+            //     Ok(data) => {
+            //         log::info!("data: {:?}", &data);
+            //     }
+            // }
+
+            // let pos = 0;
+            // if let Err(e) = client.write_multiple_registers(
+            //     id,
+            //     0x0016,
+            //     vec![(pos & 0xffff) as u16, (pos >> 16) as u16],
+            // ) {
+            //     log::error!("{:?}", &e);
+            //     return Err(anyhow::anyhow!("{}", e.to_string()));
+            // }
+            // // std::thread::sleep(Duration::from_secs(3));
+
+            // match client.read_holding_registers(id, 0x0016, 2) {
+            //     Err(e) => {
+            //         log::error!("{:?}", &e);
+            //         return Err(anyhow::anyhow!("{}", e.to_string()));
+            //     }
+            //     Ok(data) => {
+            //         log::info!("data: {:?}", &data);
+            //     }
+            // }
         }
     }
 }
