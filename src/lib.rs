@@ -340,110 +340,110 @@ impl std::ops::Not for Coil {
     }
 }
 
-#[test]
-fn test_function() -> Result<()> {
-    std::env::set_var("RUST_LOG", "DEBUG");
-    env_logger::init();
+// #[test]
+// fn test_function() -> Result<()> {
+//     std::env::set_var("RUST_LOG", "DEBUG");
+//     env_logger::init();
 
-    let stream = Box::new(serial::SerialStream::new("COM16", 19200)?);
+//     let stream = Box::new(serial::SerialStream::new("COM16", 19200)?);
 
-    let mut client = Client::new(stream)?;
-    client.set_timeout(Duration::from_millis(500))?;
-    // client.set_need_reply(false);
+//     let mut client = Client::new(stream)?;
+//     client.set_timeout(Duration::from_millis(500))?;
+//     // client.set_need_reply(false);
 
-    loop {
-        for id in [15, 16] {
-            // 使能
-            if let Err(e) = client.write_single_register(id, 0x0000, 0x01) {
-                log::error!("{:?}", &e);
-                return Err(anyhow::anyhow!("{}", e.to_string()));
-            }
+//     loop {
+//         for id in [15, 16] {
+//             // 使能
+//             if let Err(e) = client.write_single_register(id, 0x0000, 0x01) {
+//                 log::error!("{:?}", &e);
+//                 return Err(anyhow::anyhow!("{}", e.to_string()));
+//             }
 
-            // 设置速度
-            if let Err(e) = client.write_single_register(id, 0x0002, 1000) {
-                log::error!("{:?}", &e);
-                return Err(anyhow::anyhow!("{}", e.to_string()));
-            }
+//             // 设置速度
+//             if let Err(e) = client.write_single_register(id, 0x0002, 1000) {
+//                 log::error!("{:?}", &e);
+//                 return Err(anyhow::anyhow!("{}", e.to_string()));
+//             }
             
-            // 设置加速度
-            if let Err(e) = client.write_single_register(id, 0x0003, 2000) {
-                log::error!("{:?}", &e);
-                return Err(anyhow::anyhow!("{}", e.to_string()));
-            }
+//             // 设置加速度
+//             if let Err(e) = client.write_single_register(id, 0x0003, 2000) {
+//                 log::error!("{:?}", &e);
+//                 return Err(anyhow::anyhow!("{}", e.to_string()));
+//             }
 
-            let pos = 0;
-            log::info!("pos: {:?}", &pos);
+//             let pos = 0;
+//             log::info!("pos: {:?}", &pos);
 
-            if let Err(e) = client.write_multiple_registers(
-                id,
-                0x0016,
-                vec![(pos & 0xffff) as u16, (pos >> 16) as u16],
-            ) {
-                log::error!("{:?}", &e);
-                return Err(anyhow::anyhow!("{}", e.to_string()));
-            }
-            // std::thread::sleep(Duration::from_secs(3));
+//             if let Err(e) = client.write_multiple_registers(
+//                 id,
+//                 0x0016,
+//                 vec![(pos & 0xffff) as u16, (pos >> 16) as u16],
+//             ) {
+//                 log::error!("{:?}", &e);
+//                 return Err(anyhow::anyhow!("{}", e.to_string()));
+//             }
+//             // std::thread::sleep(Duration::from_secs(3));
 
-            // match client.read_holding_registers(id, 0x0016, 2) {
-            //     Err(e) => {
-            //         log::error!("{:?}", &e);
-            //         return Err(anyhow::anyhow!("{}", e.to_string()));
-            //     }
-            //     Ok(data) => {
-            //         log::info!("data: {:?}", &data);
-            //     }
-            // }
+//             // match client.read_holding_registers(id, 0x0016, 2) {
+//             //     Err(e) => {
+//             //         log::error!("{:?}", &e);
+//             //         return Err(anyhow::anyhow!("{}", e.to_string()));
+//             //     }
+//             //     Ok(data) => {
+//             //         log::info!("data: {:?}", &data);
+//             //     }
+//             // }
 
-            // let pos = 0;
-            // if let Err(e) = client.write_multiple_registers(
-            //     id,
-            //     0x0016,
-            //     vec![(pos & 0xffff) as u16, (pos >> 16) as u16],
-            // ) {
-            //     log::error!("{:?}", &e);
-            //     return Err(anyhow::anyhow!("{}", e.to_string()));
-            // }
-            // // std::thread::sleep(Duration::from_secs(3));
+//             // let pos = 0;
+//             // if let Err(e) = client.write_multiple_registers(
+//             //     id,
+//             //     0x0016,
+//             //     vec![(pos & 0xffff) as u16, (pos >> 16) as u16],
+//             // ) {
+//             //     log::error!("{:?}", &e);
+//             //     return Err(anyhow::anyhow!("{}", e.to_string()));
+//             // }
+//             // // std::thread::sleep(Duration::from_secs(3));
 
-            // match client.read_holding_registers(id, 0x0016, 2) {
-            //     Err(e) => {
-            //         log::error!("{:?}", &e);
-            //         return Err(anyhow::anyhow!("{}", e.to_string()));
-            //     }
-            //     Ok(data) => {
-            //         log::info!("data: {:?}", &data);
-            //     }
-            // }
-        }
-    }
-}
+//             // match client.read_holding_registers(id, 0x0016, 2) {
+//             //     Err(e) => {
+//             //         log::error!("{:?}", &e);
+//             //         return Err(anyhow::anyhow!("{}", e.to_string()));
+//             //     }
+//             //     Ok(data) => {
+//             //         log::info!("data: {:?}", &data);
+//             //     }
+//             // }
+//         }
+//     }
+// }
 
-#[test]
-fn test_custom_function() -> Result<()> {
-    std::env::set_var("RUST_LOG", "DEBUG");
-    env_logger::init();
+// #[test]
+// fn test_custom_function() -> Result<()> {
+//     std::env::set_var("RUST_LOG", "DEBUG");
+//     env_logger::init();
 
-    let stream = Box::new(serial::SerialStream::new("COM16", 19200)?);
+//     let stream = Box::new(serial::SerialStream::new("COM16", 19200)?);
 
-    let mut client = Client::new(stream)?;
-    client.set_timeout(Duration::from_millis(2000))?;
+//     let mut client = Client::new(stream)?;
+//     client.set_timeout(Duration::from_millis(2000))?;
 
-    // 使用功能码 0x7a 修改设备地址
+//     // 使用功能码 0x7a 修改设备地址
 
-    // ID 0x7A TargetId CrcH CrcL
+//     // ID 0x7A TargetId CrcH CrcL
 
-    let mut req = BytesMut::with_capacity(6);
-    req.put_u8(15);
-    req.put_u8(0x7A);
-    req.put_u16(0x00);
-    req.put_u8(2);
-    let crc = calc_crc(&req);
-    req.put_u16(crc);
+//     let mut req = BytesMut::with_capacity(6);
+//     req.put_u8(15);
+//     req.put_u8(0x7A);
+//     req.put_u16(0x00);
+//     req.put_u8(2);
+//     let crc = calc_crc(&req);
+//     req.put_u16(crc);
 
-    let res = vec![0u8; 5];
+//     let res = vec![0u8; 5];
 
-    let data = client.custom(req.to_vec(), res)?;
-    log::info!("data: {:?}", &data);
+//     let data = client.custom(req.to_vec(), res)?;
+//     log::info!("data: {:?}", &data);
 
-    Ok(())
-}
+//     Ok(())
+// }
